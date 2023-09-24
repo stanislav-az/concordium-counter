@@ -4,20 +4,22 @@
 use concordium_std::*;
 use core::fmt::Debug;
 
-/// Your smart contract state.
+/// Counter state
 #[derive(Serialize, SchemaType)]
 pub struct State {
-    // Your state
+    counter: i8,
 }
 
-/// Your smart contract errors.
+/// Counter smart contract errors.
 #[derive(Debug, PartialEq, Eq, Reject, Serial, SchemaType)]
 enum Error {
     /// Failed parsing the parameter.
     #[from(ParseError)]
     ParseParams,
-    /// Your error
-    YourError,
+    /// The transaction must be triggered by the owner of the contract
+    OwnerError,
+    IncrementError,
+    DecrementError,
 }
 
 /// Init function that creates a new smart contract.
@@ -26,33 +28,36 @@ fn init<S: HasStateApi>(
     _ctx: &impl HasInitContext,
     _state_builder: &mut StateBuilder<S>,
 ) -> InitResult<State> {
-    // Your code
-
-    Ok(State {})
+    Ok(State { counter: 0 })
 }
 
-/// Receive function. The input parameter is the boolean variable `throw_error`.
-///  If `throw_error == true`, the receive function will throw a custom error.
-///  If `throw_error == false`, the receive function executes successfully.
+/// Receive function. The input parameter is the increment value `i8`.
+///  If the account owner does not match the contract owner, the receive function will throw [`Error::OwnerError`].
+///  If the number to increment by is not positive or is zero, the receive function will throw [`Error::IncrementError`].
 #[receive(
     contract = "counter",
-    name = "receive",
-    parameter = "bool",
+    name = "increment",
+    parameter = "i8",
     error = "Error",
     mutable
 )]
-fn receive<S: HasStateApi>(
+fn increment<S: HasStateApi>(
     ctx: &impl HasReceiveContext,
-    _host: &mut impl HasHost<State, StateApiType = S>,
+    host: &mut impl HasHost<State, StateApiType = S>,
 ) -> Result<(), Error> {
-    // Your code
+    let increment_val: i8 = ctx.parameter_cursor().get()?;
+    let state = host.state_mut();
 
-    let throw_error = ctx.parameter_cursor().get()?; // Returns Error::ParseError on failure
-    if throw_error {
-        Err(Error::YourError)
-    } else {
-        Ok(())
-    }
+    ensure!(
+        ctx.sender().matches_account(&ctx.owner()),
+        Error::OwnerError
+    );
+
+    ensure!(increment_val > 0, Error::IncrementError);
+
+    state.counter += increment_val;
+
+    Ok(())
 }
 
 /// View function that returns the content of the state.
@@ -62,75 +67,4 @@ fn view<'b, S: HasStateApi>(
     host: &'b impl HasHost<State, StateApiType = S>,
 ) -> ReceiveResult<&'b State> {
     Ok(host.state())
-}
-
-#[concordium_cfg_test]
-mod tests {
-    use super::*;
-    use test_infrastructure::*;
-
-    type ContractResult<A> = Result<A, Error>;
-
-    #[concordium_test]
-    /// Test that initializing the contract succeeds with some state.
-    fn test_init() {
-        let ctx = TestInitContext::empty();
-
-        let mut state_builder = TestStateBuilder::new();
-
-        let state_result = init(&ctx, &mut state_builder);
-        state_result.expect_report("Contract initialization results in error");
-    }
-
-    #[concordium_test]
-    /// Test that invoking the `receive` endpoint with the `false` parameter
-    /// succeeds in updating the contract.
-    fn test_throw_no_error() {
-        let ctx = TestInitContext::empty();
-
-        let mut state_builder = TestStateBuilder::new();
-
-        // Initializing state
-        let initial_state = init(&ctx, &mut state_builder).expect("Initialization should pass");
-
-        let mut ctx = TestReceiveContext::empty();
-
-        let throw_error = false;
-        let parameter_bytes = to_bytes(&throw_error);
-        ctx.set_parameter(&parameter_bytes);
-
-        let mut host = TestHost::new(initial_state, state_builder);
-
-        // Call the contract function.
-        let result: ContractResult<()> = receive(&ctx, &mut host);
-
-        // Check the result.
-        claim!(result.is_ok(), "Results in rejection");
-    }
-
-    #[concordium_test]
-    /// Test that invoking the `receive` endpoint with the `true` parameter
-    /// results in the `YourError` being thrown.
-    fn test_throw_error() {
-        let ctx = TestInitContext::empty();
-
-        let mut state_builder = TestStateBuilder::new();
-
-        // Initializing state
-        let initial_state = init(&ctx, &mut state_builder).expect("Initialization should pass");
-
-        let mut ctx = TestReceiveContext::empty();
-
-        let throw_error = true;
-        let parameter_bytes = to_bytes(&throw_error);
-        ctx.set_parameter(&parameter_bytes);
-
-        let mut host = TestHost::new(initial_state, state_builder);
-
-        // Call the contract function.
-        let error: ContractResult<()> = receive(&ctx, &mut host);
-
-        // Check the result.
-        claim_eq!(error, Err(Error::YourError), "Function should throw an error.");
-    }
 }
