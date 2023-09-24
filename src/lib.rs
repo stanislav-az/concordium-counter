@@ -60,11 +60,37 @@ fn increment<S: HasStateApi>(
     Ok(())
 }
 
+#[receive(
+    contract = "counter",
+    name = "decrement",
+    parameter = "i8",
+    error = "Error",
+    mutable
+)]
+fn decrement<S: HasStateApi>(
+    ctx: &impl HasReceiveContext,
+    host: &mut impl HasHost<State, StateApiType = S>,
+) -> Result<(), Error> {
+    let decrement_val: i8 = ctx.parameter_cursor().get()?;
+    let state = host.state_mut();
+
+    ensure!(
+        ctx.sender().matches_account(&ctx.owner()),
+        Error::OwnerError
+    );
+
+    ensure!(decrement_val < 0, Error::DecrementError);
+
+    state.counter += decrement_val;
+
+    Ok(())
+}
+
 /// View function that returns the content of the state.
-#[receive(contract = "counter", name = "view", return_value = "State")]
+#[receive(contract = "counter", name = "view", return_value = "i8")]
 fn view<'b, S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
     host: &'b impl HasHost<State, StateApiType = S>,
-) -> ReceiveResult<&'b State> {
-    Ok(host.state())
+) -> ReceiveResult<i8> {
+    Ok(host.state().counter)
 }
